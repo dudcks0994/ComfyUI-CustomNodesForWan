@@ -12,9 +12,6 @@ import comfy.sample
 import latent_preview
 from typing import Tuple, Optional
 
-
-MAX_TOTAL_PIXELS=720 * 1200
-
 class WanAnimateToVideoNative:
     """
     Unified node for generating long videos with WAN models.
@@ -62,6 +59,7 @@ class WanAnimateToVideoNative:
                 "pose_video": ("IMAGE", {"default": None}),
                 "background_video": ("IMAGE", {"default": None}),
                 "character_mask": ("MASK", {"default": None}),
+                "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": nodes.MAX_RESOLUTION, "step": 1, "tooltip": "Maximum total pixels for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
             }
         }
         
@@ -87,6 +85,7 @@ class WanAnimateToVideoNative:
         background_video: Optional[torch.Tensor] = None,
         character_mask: Optional[torch.Tensor] = None,
         continue_motion_images: Optional[torch.Tensor] = None,  # Pass decoded images directly (same as original)
+        max_total_pixels: int = 720 * 1200,
     ) -> Tuple:
         """
         Prepare conditioning and latent for a single chunk.
@@ -155,7 +154,7 @@ class WanAnimateToVideoNative:
             total_pixels = pose_height * pose_width
 
             print(f"pose_video before encode")
-            if total_pixels > MAX_TOTAL_PIXELS:
+            if total_pixels > max_total_pixels:
                 print(f"[WanAnimateToVideoNative] Encoding tiled for pose_video")
                 pose_video_latent = self._encode_tiled(vae, pose_video[:, :, :, :3], tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
             else:
@@ -231,7 +230,7 @@ class WanAnimateToVideoNative:
         image_height = image.shape[1]
         image_width = image.shape[2]
         total_pixels = image_height * image_width
-        if total_pixels > MAX_TOTAL_PIXELS:
+        if total_pixels > max_total_pixels:
             print(f"[WanAnimateToVideoNative] Encoding tiled for image")
             image_latent = self._encode_tiled(vae, image[:, :, :, :3], tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
         else:
@@ -394,6 +393,7 @@ class WanAnimateToVideoNative:
         pose_video=None,
         background_video=None,
         character_mask=None,
+        max_total_pixels: int = 720 * 1200,
     ):
         """
         Execute unified video generation.
@@ -428,7 +428,7 @@ class WanAnimateToVideoNative:
         image_height = image_input.shape[1]
         image_width = image_input.shape[2]
         total_pixels = image_height * image_width
-        if total_pixels > MAX_TOTAL_PIXELS:
+        if total_pixels > max_total_pixels:
             print(f"[WanAnimateToVideoNative] Encoding tiled for reference_image")
             reference_latent = self._encode_tiled(vae, image_input, tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
         else:
@@ -469,6 +469,7 @@ class WanAnimateToVideoNative:
                     background_video=background_video,
                     character_mask=character_mask,
                     continue_motion_images=prev_continue_motion_images if not is_first else None,
+                    max_total_pixels=max_total_pixels,
                 )
             
             # Update guider conditioning in-place (no recreation)
@@ -491,7 +492,7 @@ class WanAnimateToVideoNative:
 
             expected_total_pixels = h_latent * w_latent
 
-            if expected_total_pixels > MAX_TOTAL_PIXELS:
+            if expected_total_pixels > max_total_pixels:
                 # VRAM 부족 방지를 위해 타일 단위 디코딩
                 print(f"[WanAnimateToVideoUnified] Decoding tiled for chunk {chunk_idx + 1}")
                 chunk_images = self._decode_tiled(vae, trimmed_samples, tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
