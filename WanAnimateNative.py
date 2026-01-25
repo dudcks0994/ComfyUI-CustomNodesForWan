@@ -59,7 +59,7 @@ class WanAnimateToVideoNative:
                 "pose_video": ("IMAGE", {"default": None}),
                 "background_video": ("IMAGE", {"default": None}),
                 "character_mask": ("MASK", {"default": None}),
-                "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": nodes.MAX_RESOLUTION, "step": 1, "tooltip": "Maximum total pixels for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
+                "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": nodes.MAX_RESOLUTION * nodes.MAX_RESOLUTION, "step": 1, "tooltip": "Maximum total pixels for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
             }
         }
         
