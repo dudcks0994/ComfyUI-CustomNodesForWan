@@ -11,6 +11,7 @@ import comfy.utils
 import comfy.sample
 import latent_preview
 from typing import Tuple, Optional
+from .util import VRAMTracker
 
 class WanAnimateToVideoNative:
     """
@@ -59,7 +60,7 @@ class WanAnimateToVideoNative:
                 "pose_video": ("IMAGE", {"default": None}),
                 "background_video": ("IMAGE", {"default": None}),
                 "character_mask": ("MASK", {"default": None}),
-                "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": nodes.MAX_RESOLUTION * nodes.MAX_RESOLUTION, "step": 1, "tooltip": "Maximum total pixels for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
+                "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": 99999999, "step": 1, "tooltip": "Maximum total pixels for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
             }
         }
         
@@ -154,12 +155,15 @@ class WanAnimateToVideoNative:
             total_pixels = pose_height * pose_width
 
             print(f"pose_video before encode")
+            vram_tracker = VRAMTracker()
+            vram_tracker.start_tracking("pose_video_encode")
             if total_pixels > max_total_pixels:
                 print(f"[WanAnimateToVideoNative] Encoding tiled for pose_video")
                 pose_video_latent = self._encode_tiled(vae, pose_video[:, :, :, :3], tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
             else:
                 print(f"[WanAnimateToVideoNative] Encoding normal for pose_video")
                 pose_video_latent = vae.encode(pose_video[:, :, :, :3])
+            vram_tracker.end_tracking("pose_video_encode")
             print(f"pose_video_latent encode done: {pose_video_latent.shape}")
 
             positive = node_helpers.conditioning_set_values(positive, {"pose_video_latent": pose_video_latent})
@@ -230,13 +234,14 @@ class WanAnimateToVideoNative:
         image_height = image.shape[1]
         image_width = image.shape[2]
         total_pixels = image_height * image_width
+        vram_tracker.start_tracking("image_encode")
         if total_pixels > max_total_pixels:
             print(f"[WanAnimateToVideoNative] Encoding tiled for image")
             image_latent = self._encode_tiled(vae, image[:, :, :, :3], tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
         else:
             print(f"[WanAnimateToVideoNative] Encoding normal for image")
             image_latent = vae.encode(image[:, :, :, :3])
-
+        vram_tracker.end_tracking("image_encode")
         concat_latent_image = torch.cat((concat_latent_image, image_latent), dim=2)
 
         mask_refmotion = mask_refmotion.view(
@@ -428,13 +433,15 @@ class WanAnimateToVideoNative:
         image_height = image_input.shape[1]
         image_width = image_input.shape[2]
         total_pixels = image_height * image_width
+        vram_tracker = VRAMTracker()
+        vram_tracker.start_tracking("reference_image_encode")
         if total_pixels > max_total_pixels:
             print(f"[WanAnimateToVideoNative] Encoding tiled for reference_image")
             reference_latent = self._encode_tiled(vae, image_input, tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
         else:
             print(f"[WanAnimateToVideoNative] Encoding normal for reference_image")
             reference_latent = vae.encode(image_input)
-
+        vram_tracker.end_tracking("reference_image_encode")
         # Memory optimization: pre-allocate final tensor instead of using list + cat
         # Calculate total output frames
         total_output_frames = sum(output_frames for _, output_frames, _ in chunk_info)
@@ -492,6 +499,8 @@ class WanAnimateToVideoNative:
 
             expected_total_pixels = h_latent * w_latent
 
+
+            vram_tracker.start_tracking("trimmed_samples_decode")
             if expected_total_pixels > max_total_pixels:
                 # VRAM 부족 방지를 위해 타일 단위 디코딩
                 print(f"[WanAnimateToVideoUnified] Decoding tiled for chunk {chunk_idx + 1}")
@@ -500,6 +509,8 @@ class WanAnimateToVideoNative:
                 # 일반 디코딩
                 print(f"[WanAnimateToVideoUnified] Decoding normal for chunk {chunk_idx + 1}")
                 chunk_images = vae.decode(trimmed_samples)
+
+            vram_tracker.end_tracking("trimmed_samples_decode")
             
             # Free trimmed_samples memory immediately after decode (no longer needed)
             del trimmed_samples
