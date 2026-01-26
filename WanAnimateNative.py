@@ -11,7 +11,6 @@ import comfy.utils
 import comfy.sample
 import latent_preview
 from typing import Tuple, Optional
-from .util import VRAMTracker
 
 class WanAnimateToVideoNative:
     """
@@ -61,6 +60,9 @@ class WanAnimateToVideoNative:
                 "background_video": ("IMAGE", {"default": None}),
                 "character_mask": ("MASK", {"default": None}),
                 "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": 99999999, "step": 1, "tooltip": "Maximum total pixels for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
+            },
+            "optional": {
+                "continue_motion": ("IMAGE", {"default": None, "tooltip": "Optional input to resume generation. When provided, skips the first chunk and uses the last continue_motion_max_frames from this image sequence to start from the second chunk."}),
             }
         }
         
@@ -87,6 +89,7 @@ class WanAnimateToVideoNative:
         character_mask: Optional[torch.Tensor] = None,
         continue_motion_images: Optional[torch.Tensor] = None,  # Pass decoded images directly (same as original)
         max_total_pixels: int = 720 * 1200,
+        is_first_chunk: bool = True,  # If True, don't adjust video_frame_offset for continue_motion
     ) -> Tuple:
         """
         Prepare conditioning and latent for a single chunk.
@@ -113,9 +116,11 @@ class WanAnimateToVideoNative:
             # Use the last continue_motion_max_frames from the decoded images
             continue_motion = continue_motion_images[-continue_motion_max_frames:]
             
-            # CRITICAL: Adjust video_frame_offset like original code does!
-            video_frame_offset -= continue_motion.shape[0]
-            video_frame_offset = max(0, video_frame_offset)
+            # Adjust video_frame_offset only for non-first chunks (internal chunk continuation)
+            # For first chunk with external continue_motion input, keep offset at 0
+            if not is_first_chunk:
+                video_frame_offset -= continue_motion.shape[0]
+                video_frame_offset = max(0, video_frame_offset)
             
             # Upscale and place in image tensor (same as original)
             continue_motion = comfy.utils.common_upscale(
@@ -155,15 +160,12 @@ class WanAnimateToVideoNative:
             total_pixels = pose_height * pose_width
 
             print(f"pose_video before encode")
-            vram_tracker = VRAMTracker()
-            vram_tracker.start_tracking("pose_video_encode")
             if total_pixels > max_total_pixels:
                 print(f"[WanAnimateToVideoNative] Encoding tiled for pose_video")
                 pose_video_latent = self._encode_tiled(vae, pose_video[:, :, :, :3], tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
             else:
                 print(f"[WanAnimateToVideoNative] Encoding normal for pose_video")
                 pose_video_latent = vae.encode(pose_video[:, :, :, :3])
-            vram_tracker.end_tracking("pose_video_encode")
             print(f"pose_video_latent encode done: {pose_video_latent.shape}")
 
             positive = node_helpers.conditioning_set_values(positive, {"pose_video_latent": pose_video_latent})
@@ -234,14 +236,12 @@ class WanAnimateToVideoNative:
         image_height = image.shape[1]
         image_width = image.shape[2]
         total_pixels = image_height * image_width
-        vram_tracker.start_tracking("image_encode")
         if total_pixels > max_total_pixels:
             print(f"[WanAnimateToVideoNative] Encoding tiled for image")
             image_latent = self._encode_tiled(vae, image[:, :, :, :3], tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
         else:
             print(f"[WanAnimateToVideoNative] Encoding normal for image")
             image_latent = vae.encode(image[:, :, :, :3])
-        vram_tracker.end_tracking("image_encode")
         concat_latent_image = torch.cat((concat_latent_image, image_latent), dim=2)
 
         mask_refmotion = mask_refmotion.view(
@@ -399,6 +399,7 @@ class WanAnimateToVideoNative:
         background_video=None,
         character_mask=None,
         max_total_pixels: int = 720 * 1200,
+        continue_motion=None,
     ):
         """
         Execute unified video generation.
@@ -417,6 +418,13 @@ class WanAnimateToVideoNative:
         # Calculate chunks
         chunk_info = self._calculate_chunk_info(total_length, chunk_length, continue_motion_max_frames)
         
+        # Check if continue_motion input is valid (needs at least continue_motion_max_frames)
+        use_continue_motion_input = (continue_motion is not None and continue_motion.shape[0] >= continue_motion_max_frames)
+        if continue_motion is not None and not use_continue_motion_input:
+            print(f"[WanAnimateToVideoNative] Warning: continue_motion provided but has only {continue_motion.shape[0]} frames (need at least {continue_motion_max_frames}). Ignoring.")
+        if use_continue_motion_input:
+            print(f"[WanAnimateToVideoNative] Using continue_motion input ({continue_motion.shape[0]} frames) to resume generation")
+        
         # Pre-compute clip_vision_output into conditioning once
         if clip_vision_output is not None:
             positive = node_helpers.conditioning_set_values(positive, {"clip_vision_output": clip_vision_output})
@@ -433,15 +441,12 @@ class WanAnimateToVideoNative:
         image_height = image_input.shape[1]
         image_width = image_input.shape[2]
         total_pixels = image_height * image_width
-        vram_tracker = VRAMTracker()
-        vram_tracker.start_tracking("reference_image_encode")
         if total_pixels > max_total_pixels:
             print(f"[WanAnimateToVideoNative] Encoding tiled for reference_image")
             reference_latent = self._encode_tiled(vae, image_input, tile_size=1024, overlap=128, temporal_size=128, temporal_overlap=16)
         else:
             print(f"[WanAnimateToVideoNative] Encoding normal for reference_image")
             reference_latent = vae.encode(image_input)
-        vram_tracker.end_tracking("reference_image_encode")
         # Memory optimization: pre-allocate final tensor instead of using list + cat
         # Calculate total output frames
         total_output_frames = sum(output_frames for _, output_frames, _ in chunk_info)
@@ -449,9 +454,15 @@ class WanAnimateToVideoNative:
         current_frame_idx = 0
         
         video_frame_offset = 0
-        # Store the last N decoded IMAGE frames for continue_motion (same as original node behavior)
-        # This ensures identical results to using the original node multiple times
-        prev_continue_motion_images = None
+        # Initialize prev_continue_motion_images from continue_motion input if provided
+        if use_continue_motion_input:
+            # Use the last continue_motion_max_frames from the provided continue_motion images
+            prev_continue_motion_images = continue_motion[-continue_motion_max_frames:].clone()
+            print(f"[WanAnimateToVideoNative] Initialized with {prev_continue_motion_images.shape[0]} frames from continue_motion input")
+        else:
+            # Store the last N decoded IMAGE frames for continue_motion (same as original node behavior)
+            # This ensures identical results to using the original node multiple times
+            prev_continue_motion_images = None
         
         for chunk_idx, (generation_length, output_frames, is_first) in enumerate(chunk_info):
             print(f"[WanAnimateToVideoUnified] Processing chunk {chunk_idx + 1}/{len(chunk_info)}, "
@@ -475,8 +486,9 @@ class WanAnimateToVideoNative:
                     pose_video=pose_video,
                     background_video=background_video,
                     character_mask=character_mask,
-                    continue_motion_images=prev_continue_motion_images if not is_first else None,
+                    continue_motion_images=prev_continue_motion_images if (not is_first or use_continue_motion_input) else None,
                     max_total_pixels=max_total_pixels,
+                    is_first_chunk=is_first,  # Don't adjust offset for first chunk
                 )
             
             # Update guider conditioning in-place (no recreation)
@@ -500,7 +512,6 @@ class WanAnimateToVideoNative:
             expected_total_pixels = h_latent * w_latent
 
 
-            vram_tracker.start_tracking("trimmed_samples_decode")
             if expected_total_pixels > max_total_pixels:
                 # VRAM 부족 방지를 위해 타일 단위 디코딩
                 print(f"[WanAnimateToVideoUnified] Decoding tiled for chunk {chunk_idx + 1}")
@@ -510,7 +521,6 @@ class WanAnimateToVideoNative:
                 print(f"[WanAnimateToVideoUnified] Decoding normal for chunk {chunk_idx + 1}")
                 chunk_images = vae.decode(trimmed_samples)
 
-            vram_tracker.end_tracking("trimmed_samples_decode")
             
             # Free trimmed_samples memory immediately after decode (no longer needed)
             del trimmed_samples
