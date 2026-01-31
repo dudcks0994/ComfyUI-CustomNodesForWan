@@ -402,6 +402,9 @@ class MyBlockifyMask:
     DESCRIPTION = "Creates a block mask by dividing the bounding box of each mask into blocks of the specified size and filling in blocks that contain any part of the original mask."
 
     def process(self, masks, block_size, device="cpu", face_mask=None):
+
+        if masks == None:
+            return (None,)
         processing_device = main_device if device == "gpu" else torch.device("cpu")
         
         masks = masks.to(processing_device)
