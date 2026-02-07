@@ -88,122 +88,99 @@ class LoadMaskImageFromPath:
 
     def load_number_masks(self, folder_path, obj_id_list, start_frame, load_cap):
         if not folder_path or not os.path.exists(folder_path):
-            # Return empty mask if folder doesn't exist
-            empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return empty_mask
+            return torch.zeros((1, 64, 64), dtype=torch.float32)
         
-        # Parse obj_id_list
+        # 1. obj_id_list 파싱
         if obj_id_list.strip() == "-1":
-            # Load all npy files
             obj_ids = None
         else:
-            # Parse comma-separated numbers
             try:
                 obj_ids = [int(x.strip()) for x in obj_id_list.split(",") if x.strip()]
             except ValueError:
-                # If parsing fails, return empty mask
-                empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-                return empty_mask
+                return torch.zeros((1, 64, 64), dtype=torch.float32)
         
-        # Find all npy files matching the pattern
+        # 2. 파일 목록 필터링 (경로만 수집)
         npy_files = []
-        if os.path.isdir(folder_path):
-            for filename in os.listdir(folder_path):
-                if filename.endswith(".npy") and filename != "face.npy":
-                    # Extract the number prefix (e.g., "0" from "0_all_masks.npy")
-                    try:
-                        prefix = filename.split(".")[0]
-                        obj_id = int(prefix)
-                        
-                        if obj_ids is None or obj_id in obj_ids:
-                            filepath = os.path.join(folder_path, filename)
-                            npy_files.append((obj_id, filepath))
-                    except (ValueError, IndexError):
-                        continue
+        for filename in os.listdir(folder_path):
+            if filename.endswith(".npy") and filename != "face.npy":
+                try:
+                    prefix = filename.split(".")[0]
+                    obj_id = int(prefix)
+                    if obj_ids is None or obj_id in obj_ids:
+                        npy_files.append((obj_id, os.path.join(folder_path, filename)))
+                except (ValueError, IndexError):
+                    continue
         
         if not npy_files:
-            # Return empty mask if no files found
-            empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return empty_mask
+            return torch.zeros((1, 64, 64), dtype=torch.float32)
         
-        # Sort by obj_id to ensure consistent ordering
         npy_files.sort(key=lambda x: x[0])
         
-        # Load and combine all masks
+        # 3. 필요한 프레임만 로드 및 병합
         combined_masks = []
-        for obj_id, filepath in npy_files:
-            print(f"Loading number mask from {filepath}")
+        
+        for _, filepath in npy_files:
             try:
-                mask_data = np.load(filepath)
-                # Convert to torch tensor if needed
-                if isinstance(mask_data, np.ndarray):
-                    mask_tensor = torch.from_numpy(mask_data).float()
-                    # Ensure proper shape: if 2D, add batch dimension; if already 3D, keep as is
-                    if mask_tensor.dim() == 2:
-                        mask_tensor = mask_tensor.unsqueeze(0)
-                    combined_masks.append(mask_tensor)
+                # mmap_mode를 사용하여 파일 전체 로드를 방지
+                mask_data_mmap = np.load(filepath, mmap_mode='r')
+                num_frames = mask_data_mmap.shape[0]
+                
+                # 슬라이싱 범위 계산 (핵심!)
+                actual_start = start_frame
+                if load_cap > 0:
+                    actual_end = min(actual_start + load_cap, num_frames)
+                    print(f"actual_start: {actual_start}, actual_end: {actual_end}")
+                else:
+                    actual_end = num_frames
+                
+                # 필요한 구간만 메모리에 복사
+                mask_part = mask_data_mmap[actual_start:actual_end].copy()
+                mask_tensor = torch.from_numpy(mask_part).float()
+                
+                if mask_tensor.dim() == 2:
+                    mask_tensor = mask_tensor.unsqueeze(0)
+                
+                combined_masks.append(mask_tensor)
+                
             except Exception as e:
-                print(f"Error loading mask from {filepath}: {e}")
+                print(f"Error loading number mask {filepath}: {e}")
                 continue
-        
+
         if not combined_masks:
-            # Return empty mask if no masks were successfully loaded
-            empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return empty_mask
-        
-        # Combine all masks using max operation (like OR operation)
-        # Get the shape from the first mask
-        first_mask = combined_masks[0]
-        result_mask = torch.zeros_like(first_mask)
-        
-        if len(combined_masks) == 1:
-            # Single mask - return directly
-            result_mask = combined_masks[0]
-        else:
-            # Multiple masks - merge with max operation
-            for mask in combined_masks:
-                result_mask = torch.max(result_mask, mask)
-        
-        # start_frame이 -1이 아니면 해당 인덱스부터의 프레임들만 반환
-        if start_frame != -1 and result_mask.dim() >= 1:
-            num_frames = result_mask.shape[0]
-            if start_frame < num_frames:
-                result_mask = result_mask[start_frame:]
-            else:
-                # start_frame이 범위를 벗어나면 마지막 프레임만 반환
-                result_mask = result_mask[-1:]
-        
-        # load_cap이 -1이 아니면 해당 갯수만큼만 반환
-        if load_cap > 0 and result_mask.dim() >= 1:
-            num_frames = result_mask.shape[0]
-            if load_cap < num_frames:
-                result_mask = result_mask[:load_cap]
-        
+            return torch.zeros((1, 64, 64), dtype=torch.float32)
+
+        # 4. 여러 마스크가 있을 경우 Max 연산으로 병합
+        # 이미 슬라이싱이 끝난 상태이므로 합치기만 하면 됨
+        result_mask = combined_masks[0]
+        for i in range(1, len(combined_masks)):
+            # 만약 파일마다 프레임 수가 다를 수 있다면 짧은 쪽에 맞추거나 예외처리가 필요함
+            # 여기서는 단순히 max 연산을 수행
+            current_mask = combined_masks[i]
+            
+            # 프레임 수가 다를 경우를 대비한 최소 크기 맞춤 (선택 사항)
+            min_frames = min(result_mask.shape[0], current_mask.shape[0])
+            result_mask = torch.max(result_mask[:min_frames], current_mask[:min_frames])
+            
         return result_mask
 
     def load_batch_images(self, folder_path, start_index, load_cap, sort_by="name", reverse_order=False):
         if not folder_path or not os.path.exists(folder_path):
-            # 폴더가 없으면 빈 이미지 반환
             empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             return (empty_image, 0)
         
-        # 이미지 파일 목록 수집
-        image_files = []
-
         SUPPORTED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
-
-        for filename in os.listdir(folder_path):
-            ext = os.path.splitext(filename)[1].lower()
-            if ext in SUPPORTED_EXTENSIONS:
-                filepath = os.path.join(folder_path, filename)
-                image_files.append(filepath)
+        
+        # 1. 파일 경로만 수집 (메모리 사용 적음)
+        image_files = [
+            os.path.join(folder_path, f) 
+            for f in os.listdir(folder_path) 
+            if os.path.splitext(f)[1].lower() in SUPPORTED_EXTENSIONS
+        ]
         
         if not image_files:
-            # 이미지가 없으면 빈 이미지 반환
-            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
-            return empty_image
+            return torch.zeros((1, 64, 64, 3), dtype=torch.float32)
         
-        # 정렬
+        # 2. 정렬 수행
         if sort_by == "name":
             image_files.sort(key=lambda x: os.path.basename(x).lower())
         elif sort_by == "date_modified":
@@ -211,99 +188,79 @@ class LoadMaskImageFromPath:
         elif sort_by == "date_created":
             image_files.sort(key=lambda x: os.path.getctime(x))
         
-        # 역순 정렬
         if reverse_order:
             image_files.reverse()
         
-        # start_index 적용
-        if start_index > 0:
-            image_files = image_files[start_index:]
-        
-        # load_cap 적용
-        if load_cap > 0:
-            image_files = image_files[:load_cap]
+        # 3. [핵심] 로드하기 전에 리스트 슬라이싱
+        # start_index부터 시작해서 load_cap 개수만큼만 남김
+        end_index = None if load_cap <= 0 else (start_index + load_cap)
+        image_files = image_files[start_index:end_index]
         
         if not image_files:
-            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
-            return empty_image
-        
-        # 이미지 로드
+            return torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+
+        # 4. 이제 선택된 파일만 실제로 로드 (RAM 절약)
         loaded_images = []
         for filepath in image_files:
             try:
-                pil_img = Image.open(filepath)
-                
-                # RGBA인 경우 RGB로 변환
-                if pil_img.mode == 'RGBA':
-                    # 알파 채널을 흰색 배경으로 합성
-                    background = Image.new('RGB', pil_img.size, (255, 255, 255))
-                    background.paste(pil_img, mask=pil_img.split()[3])
-                    pil_img = background
-                elif pil_img.mode != 'RGB':
-                    pil_img = pil_img.convert('RGB')
-                
-                # numpy 배열로 변환하고 0-1 범위로 정규화
-                img_np = np.array(pil_img).astype(np.float32) / 255.0
-                loaded_images.append(img_np)
-                
+                with Image.open(filepath) as pil_img: # with문 사용으로 메모리 해제 보장
+                    if pil_img.mode == 'RGBA':
+                        background = Image.new('RGB', pil_img.size, (255, 255, 255))
+                        background.paste(pil_img, mask=pil_img.split()[3])
+                        pil_img = background
+                    elif pil_img.mode != 'RGB':
+                        pil_img = pil_img.convert('RGB')
+                    
+                    img_np = np.array(pil_img).astype(np.float32) / 255.0
+                    loaded_images.append(img_np)
             except Exception as e:
-                print(f"LoadBatchImage: Error loading {filepath}: {e}")
+                print(f"Error loading {filepath}: {e}")
                 continue
         
+        # (이후 동일하게 shape 체크 및 stack 진행)
         if not loaded_images:
-            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
-            return empty_image
+            return torch.zeros((1, 64, 64, 3), dtype=torch.float32)
         
-        # 모든 이미지의 크기가 같은지 확인
         first_shape = loaded_images[0].shape
         valid_images = [img for img in loaded_images if img.shape == first_shape]
         
-        if len(valid_images) != len(loaded_images):
-            print(f"LoadBatchImage: Warning - {len(loaded_images) - len(valid_images)} images had different sizes and were skipped")
-        
-        if not valid_images:
-            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
-            return empty_image
-        
-        # 배치로 스택
         batch_np = np.stack(valid_images, axis=0)
-        batch_tensor = torch.from_numpy(batch_np)
-        
-        print(f"LoadBatchImage: Loaded {len(valid_images)} images from {folder_path}")
-        
-        return batch_tensor
+        return torch.from_numpy(batch_np)
     
     def load_face_mask(self, folder_path, start_frame, load_cap):
         if not folder_path or not os.path.exists(folder_path):
-            # raise error for notification
             raise ValueError(f"Face mask folder not found: {folder_path}")
+        
         try:
-            if not os.path.exists(os.path.join(folder_path, "face.npy")):
+            mask_path = os.path.join(folder_path, "face.npy")
+            if not os.path.exists(mask_path):
                 return None
-            mask_data = np.load(os.path.join(folder_path, "face.npy"))
-            # Convert to torch tensor if needed
-            if isinstance(mask_data, np.ndarray):
-                mask_tensor = torch.from_numpy(mask_data).float()
-                # Ensure proper shape: if 2D, add batch dimension; if already 3D, keep as is
-                if mask_tensor.dim() == 2:
-                    mask_tensor = mask_tensor.unsqueeze(0)
-                # start_frame이 -1이 아니면 해당 인덱스부터의 프레임들만 반환
-                if start_frame != -1 and mask_tensor.dim() >= 1:
-                    num_frames = mask_tensor.shape[0]
-                    if start_frame < num_frames:
-                        mask_tensor = mask_tensor[start_frame:]
-                    else:
-                        # start_frame이 범위를 벗어나면 마지막 프레임만 반환
-                        mask_tensor = mask_tensor[-1:]
-                # load_cap이 -1이 아니면 해당 갯수만큼만 반환
-                if load_cap > 0 and mask_tensor.dim() >= 1:
-                    num_frames = mask_tensor.shape[0]
-                    if load_cap < num_frames:
-                        mask_tensor = mask_tensor[:load_cap]
-                return mask_tensor
+
+            # [핵심] mmap_mode='r'을 사용하여 파일을 메모리에 직접 올리지 않고 연결만 함
+            mask_data_mmap = np.load(mask_path, mmap_mode='r')
+            
+            num_frames = mask_data_mmap.shape[0]
+            
+            # 슬라이싱 범위 계산
+            actual_start = start_frame if (0 <= start_frame < num_frames) else (num_frames - 1 if start_frame >= num_frames else 0)
+            
+            if load_cap > 0:
+                actual_end = min(actual_start + load_cap, num_frames)
+            else:
+                actual_end = num_frames
+                
+            # 필요한 부분만 메모리로 복사 (copy()를 호출할 때 실제 RAM 점유)
+            mask_data = mask_data_mmap[actual_start:actual_end].copy()
+            
+            mask_tensor = torch.from_numpy(mask_data).float()
+            if mask_tensor.dim() == 2:
+                mask_tensor = mask_tensor.unsqueeze(0)
+                
+            return mask_tensor
+
         except Exception as e:
-            print(f"Error loading face mask from {folder_path}: {e}")
-            raise ValueError(f"Error loading face mask from {folder_path}: {e}")
+            print(f"Error loading face mask: {e}")
+            raise ValueError(f"Error loading face mask: {e}")
 
     def load_mask_image_from_path(self, folder_path, obj_id_list, start_frame, load_cap):
         pose_folder_path = os.path.join(folder_path, "pose")
