@@ -98,14 +98,15 @@ class WanAnimateToVideoNative:
             if continue_motion_images.shape[1] != height or continue_motion_images.shape[2] != width:
                 raise ValueError(f"[WanAnimateToVideoNative] Continue motion images are not the same size as generation size.")
 
-            image = torch.ones((length, height, width, continue_motion_images.shape[-1]), device=continue_motion_images.device, dtype=continue_motion_images.dtype) # * 0.5 왜 0.5를 곱하지?
+            image = torch.zeros((length, height, width, continue_motion_images.shape[-1]), device=continue_motion_images.device, dtype=continue_motion_images.dtype) # * 0.5 왜 0.5를 곱하지?
             image[:continue_motion_max_frames] = continue_motion_images[:continue_motion_max_frames]
 
             ref_motion_latent_length = ((continue_motion_images.shape[0] - 1) // 4) + 1
-            ref_images_num = max(0, ref_motion_latent_length * 4 - 3)
-            mask_refmotion[:, :, :ref_motion_latent_length * 4] = 0.0
+            # ref_images_num = max(0, ref_motion_latent_length * 4 - 3)
+            ref_images_num = continue_motion_images.shape[0]
+            # mask_refmotion[:, :, :ref_motion_latent_length * 4] = 0.0
         else:
-            image = torch.ones((latent_length * 4, height, width, 3), device=comfy.model_management.intermediate_device(), dtype=torch.float32)
+            image = torch.zeros((latent_length * 4, height, width, 3), device=comfy.model_management.intermediate_device(), dtype=torch.float32)
     
         if background_video is not None:
             if background_video.shape[0] <= video_frame_offset:
@@ -161,6 +162,9 @@ class WanAnimateToVideoNative:
             face_chunk = face_video[video_frame_offset:] if face_video.shape[0] > video_frame_offset else None
             face_chunk = face_chunk[:length]
             if face_chunk is not None:
+                if continue_motion_images is not None:
+                    dummy_face_chunk = torch.zeros((continue_motion_max_frames, face_chunk.shape[1], face_chunk.shape[2], 3), device=face_chunk.device, dtype=face_chunk.dtype)
+                    face_chunk = torch.cat((dummy_face_chunk, face_chunk), dim=0)
                 if face_chunk.shape[0] < length:
                     need_frames = length - face_chunk.shape[0]
                     face_chunk = torch.cat((face_chunk, face_chunk[-need_frames:]), dim=0)
