@@ -98,7 +98,7 @@ class WanAnimateToVideoNative:
             if continue_motion_images.shape[1] != height or continue_motion_images.shape[2] != width:
                 raise ValueError(f"[WanAnimateToVideoNative] Continue motion images are not the same size as generation size.")
 
-            image = torch.zeros((length, height, width, continue_motion_images.shape[-1]), device=continue_motion_images.device, dtype=continue_motion_images.dtype) # * 0.5 왜 0.5를 곱하지?
+            image = torch.zeros((length, height, width, continue_motion_images.shape[-1]), device=continue_motion_images.device, dtype=continue_motion_images.dtype)
             image[:continue_motion_max_frames] = continue_motion_images[:continue_motion_max_frames]
 
             ref_motion_latent_length = ((continue_motion_images.shape[0] - 1) // 4) + 1
@@ -106,7 +106,7 @@ class WanAnimateToVideoNative:
             ref_images_num = continue_motion_images.shape[0]
             # mask_refmotion[:, :, :ref_motion_latent_length * 4] = 0.0
         else:
-            image = torch.zeros((latent_length * 4, height, width, 3), device=comfy.model_management.intermediate_device(), dtype=torch.float32)
+            image = torch.zeros((length, height, width, 3), device=comfy.model_management.intermediate_device(), dtype=torch.float32)
     
         if background_video is not None:
             if background_video.shape[0] <= video_frame_offset:
@@ -116,7 +116,7 @@ class WanAnimateToVideoNative:
             if background_video.shape[0] < image.shape[0] - ref_images_num:
                 need_frames = image.shape[0] - ref_images_num - background_video.shape[0]
                 background_video = torch.cat((background_video,) + (background_video[-1:],) * (need_frames), dim=0)
-            image[ref_images_num:] = background_video[:image.shape[0] - ref_images_num]
+            image[ref_images_num:] = background_video[:length - ref_images_num]
             
         if character_mask is not None:
             if character_mask.shape[0] <= video_frame_offset:
@@ -243,6 +243,8 @@ class WanAnimateToVideoNative:
         length = samples.shape[2] * 4
         if (height * width) > max_total_pixels:
             tile_size = height if height < width else width
+            if tile_size > 1024:
+                tile_size = 1024
             print(f"[WanAnimateToVideoNative] Tiled VAE Decoding with tile size: {tile_size}")
             decoded = self._decode_tiled(vae, samples, tile_size=tile_size, temporal_size=length)
         else:
@@ -279,6 +281,8 @@ class WanAnimateToVideoNative:
         length = pixels.shape[0]
         if (height * width) > max_total_pixels:
             tile_size = height if height < width else width
+            if tile_size > 1024:
+                tile_size = 1024
             print(f"[WanAnimateToVideoNative] Tiled VAE Encoding with tile size: {tile_size}")
             return self._encode_tiled(vae, pixels, tile_size=1024, temporal_size=length)
         else:
@@ -301,7 +305,7 @@ class WanAnimateToVideoNative:
 
         reference_image_latent = self._vae_encode(vae, reference_image, max_total_pixels)
         
-        chunk_info = self._calculate_chunk_info(total_length, chunk_length, continue_motion_max_frames)
+        chunk_info = self._calculate_chunk_info(total_length, chunk_length, continue_motion_max_frames, continue_generation_images)
         all_output_images, video_frame_offset, prev_cm_images = [], 0, None
 
         if continue_generation_images is not None:
