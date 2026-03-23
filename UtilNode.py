@@ -88,7 +88,7 @@ class LoadMaskImageFromPath:
 
     def load_number_masks(self, folder_path, obj_id_list, start_frame, load_cap):
         if not folder_path or not os.path.exists(folder_path):
-            return torch.zeros((1, 64, 64), dtype=torch.float32)
+            raise ValueError(f"Folder path not found: {folder_path}")
         
         # 1. obj_id_list 파싱
         if obj_id_list.strip() == "-1":
@@ -97,7 +97,7 @@ class LoadMaskImageFromPath:
             try:
                 obj_ids = [int(x.strip()) for x in obj_id_list.split(",") if x.strip()]
             except ValueError:
-                return torch.zeros((1, 64, 64), dtype=torch.float32)
+                raise ValueError(f"Invalid obj_id_list: {obj_id_list}")
         
         # 2. 파일 목록 필터링 (경로만 수집)
         npy_files = []
@@ -112,7 +112,7 @@ class LoadMaskImageFromPath:
                     continue
         
         if not npy_files:
-            return torch.zeros((1, 64, 64), dtype=torch.float32)
+            raise ValueError(f"No npy files found in {folder_path}")
         
         npy_files.sort(key=lambda x: x[0])
         
@@ -147,7 +147,7 @@ class LoadMaskImageFromPath:
                 continue
 
         if not combined_masks:
-            return torch.zeros((1, 64, 64), dtype=torch.float32)
+            raise ValueError(f"No combined masks found")
 
         # 4. 여러 마스크가 있을 경우 Max 연산으로 병합
         # 이미 슬라이싱이 끝난 상태이므로 합치기만 하면 됨
@@ -229,7 +229,8 @@ class LoadMaskImageFromPath:
     
     def load_face_mask(self, folder_path, start_frame, load_cap):
         if not folder_path or not os.path.exists(folder_path):
-            raise ValueError(f"Face mask folder not found: {folder_path}")
+            print(f"Face mask folder not found: {folder_path}")
+            return None
         
         try:
             mask_path = os.path.join(folder_path, "face.npy")
@@ -260,7 +261,7 @@ class LoadMaskImageFromPath:
 
         except Exception as e:
             print(f"Error loading face mask: {e}")
-            raise ValueError(f"Error loading face mask: {e}")
+            return None
 
     def load_mask_image_from_path(self, folder_path, obj_id_list, start_frame, load_cap):
         pose_folder_path = os.path.join(folder_path, "pose")
