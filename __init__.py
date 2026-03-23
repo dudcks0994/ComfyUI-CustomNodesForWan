@@ -9,6 +9,7 @@ from .WanAnimateNative import WanAnimateToVideoNative
 from aiohttp import web
 from server import PromptServer
 from .ClipEncodeNode import CustomCLIPTextEncodeNode
+from .CustomTextEncodeQwenImageEditNode import CustomTextEncodeQwenImageEditNode, CustomImagesEncodeNode
 
 NODE_CLASS_MAPPINGS = {
     "ResizeImageForWan": ResizeImageForWan,
@@ -28,7 +29,9 @@ NODE_CLASS_MAPPINGS = {
     "MyGrowMask": MyGrowMask,
     "WanAnimateToVideoNative": WanAnimateToVideoNative,
     "CustomCLIPTextEncodeNode": CustomCLIPTextEncodeNode,
-    "MyMaskSubtractNode": MyMaskSubtractNode
+    "MyMaskSubtractNode": MyMaskSubtractNode,
+    "CustomTextEncodeQwenImageEditNode": CustomTextEncodeQwenImageEditNode,
+    "CustomImagesEncodeNode": CustomImagesEncodeNode
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -49,7 +52,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MyGrowMask": "MyGrowMask",
     "WanAnimateToVideoNative": "WanAnimateToVideoNative",
     "CustomCLIPTextEncodeNode": "CustomCLIPTextEncodeNode",
-    "MyMaskSubtractNode": "MyMaskSubtractNode"
+    "MyMaskSubtractNode": "MyMaskSubtractNode",
+    "CustomTextEncodeQwenImageEditNode": "CustomTextEncodeQwenImageEditNode",
+    "CustomImagesEncodeNode": "CustomImagesEncodeNode"
 }
     
 WEB_DIRECTORY = "./web"
