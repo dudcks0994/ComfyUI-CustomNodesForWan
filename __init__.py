@@ -1,4 +1,4 @@
-from .ImageResizeForWan import ResizeImageForWan
+from .ImageResizeForWan import ResizeImageForWan, WanI2VResizeImage
 from .ShowUtils import ShowInt, ShowFloat, ShowStringText
 from .MathNode import MathNode
 from .maskNode import LoadMaskNode, SaveMaskNode, MaskPaddingNode, MaskResizingNode, MyBlockifyMask, MyGrowMask, MyMaskSubtractNode
@@ -12,6 +12,7 @@ from .ClipEncodeNode import CustomCLIPTextEncodeNode
 from .CustomTextEncodeQwenImageEditNode import CustomTextEncodeQwenImageEditNode, CustomImagesEncodeNode
 
 NODE_CLASS_MAPPINGS = {
+    "WanI2VResizeImage": WanI2VResizeImage,
     "ResizeImageForWan": ResizeImageForWan,
     "ShowInt": ShowInt,
     "ShowFloat": ShowFloat,
@@ -35,7 +36,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ResizeImageForWan": "ResizeImageForWan",
+    "WanI2VResizeImage": "Wan I2V Resize Image",
+    "ResizeImageForWan": "Wan I2V Resize Image (legacy)",
     "ShowInt": "ShowInt",
     "ShowFloat": "ShowFloat",
     "ShowStringText": "ShowStringText",
