@@ -10,7 +10,7 @@ class ShowInt:
     RETURN_TYPES = ()
     FUNCTION = "show_int"
     OUTPUT_NODE = True
-    INPUT_IS_LIST = (True,)
+    INPUT_IS_LIST = True
     CATEGORY = "Mine"
     
     def detect_type(self, value):
@@ -32,7 +32,7 @@ class ShowFloat:
     RETURN_TYPES = ()
     FUNCTION = "show_float"
     OUTPUT_NODE = True
-    INPUT_IS_LIST = (True,)
+    INPUT_IS_LIST = True
     CATEGORY = "Mine"
     
     def detect_type(self, value):
@@ -44,18 +44,50 @@ class ShowFloat:
 
 
 class ShowStringText:
+    COLOR_CHOICES = [
+        "white",
+        "black",
+        "gray",
+        "silver",
+        "red",
+        "orange",
+        "yellow",
+        "lime",
+        "green",
+        "cyan",
+        "aqua",
+        "blue",
+        "navy",
+        "purple",
+        "magenta",
+        "pink",
+        "brown",
+        "gold",
+        "tomato",
+        "coral",
+        "salmon",
+        "violet",
+        "plum",
+        "skyblue",
+        "deepskyblue",
+        "dodgerblue",
+        "turquoise",
+        "springgreen",
+    ]
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "STRING": ("STRING", {"default": "", "forceInput": True}),
+                "text_color": (cls.COLOR_CHOICES, {"default": "aqua"}),
             },
         }
 
     RETURN_TYPES = ()
     FUNCTION = "show_string"
     OUTPUT_NODE = True
-    INPUT_IS_LIST = (True,)
+    INPUT_IS_LIST = True
     CATEGORY = "Mine"
     
     def detect_type(self, value):
@@ -79,6 +111,8 @@ class ShowStringText:
         else:
             return 'other type'
 
-    def show_string(self, STRING):
+    def show_string(self, STRING, text_color="aqua"):
+        if isinstance(text_color, list):
+            text_color = text_color[0] if text_color else "aqua"
         type_info = [f"{value}" for value in STRING]
-        return {"ui": {"text": type_info}}
+        return {"ui": {"text": type_info, "text_color": [text_color]}}
