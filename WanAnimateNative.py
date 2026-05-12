@@ -40,7 +40,7 @@ class WanAnimateToVideoNative:
                 "max_total_pixels": ("INT", {"default": 720 * 1200 * 81, "min": 1, "max": 99999999, "step": 1, "tooltip": "Maximum total pixels(include frames) for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
             },
             "optional": {
-                "continue_generation_images": ("IMAGE", {"default": None}),
+                # "continue_generation_images": ("IMAGE", {"default": None}),
             }
         }
         
@@ -105,19 +105,22 @@ class WanAnimateToVideoNative:
             # ref_images_num = max(0, ref_motion_latent_length * 4 - 3)
             ref_images_num = continue_motion_images.shape[0]
             mask_refmotion[:, :, :ref_motion_latent_length * 4] = 0.0
+            video_frame_offset -= continue_motion_max_frames
         else:
             image = torch.ones((length, height, width, 3), device=concat_latent_image.device, dtype=concat_latent_image.dtype) * 0.5
     
         if background_video is not None:
             if background_video.shape[0] <= video_frame_offset:
                 raise ValueError(f"[WanAnimateToVideoNative] Background video is too short. Length: {background_video.shape[0]}, Video frame offset: {video_frame_offset}")
+            # Position i in chunk ↔ source frame [video_frame_offset + i] (offset already decremented by ref_images_num).
+            # image[:ref_images_num] is filled with continue_motion_images; image[ref_images_num:] must be the BG
+            # for source frames [video_frame_offset + ref_images_num .. video_frame_offset + length - 1].
             background_video = background_video[video_frame_offset:]
             background_video = background_video[:length]
-            if background_video.shape[0] < image.shape[0] - ref_images_num:
-                need_frames = image.shape[0] - ref_images_num - background_video.shape[0]
+            if background_video.shape[0] < length:
+                need_frames = length - background_video.shape[0]
                 background_video = torch.cat((background_video,) + (background_video[-1:],) * (need_frames), dim=0)
-            # background_video = comfy.utils.common_upscale(background_video.movedim(-1, 1), width, height, "area", "center").movedim(1, -1)
-            image[ref_images_num:] = background_video[:length - ref_images_num]
+            image[ref_images_num:] = background_video[ref_images_num:length]
             
         if character_mask is not None:
             if character_mask.shape[0] <= video_frame_offset:
@@ -132,11 +135,14 @@ class WanAnimateToVideoNative:
             if m_chunk.ndim == 4:
                 m_chunk = m_chunk.unsqueeze(1)
 
-            if m_chunk.shape[2] < mask_refmotion.shape[2] - ref_images_num:
-                need_mask_frames = mask_refmotion.shape[2] - ref_images_num - m_chunk.shape[2]
+            # Same alignment as background_video: m_chunk[i] is the mask for source frame [video_frame_offset + i].
+            # We need mask_refmotion[ref_images_num : mask_refmotion.shape[2]] = m_chunk[ref_images_num : mask_refmotion.shape[2]],
+            # so m_chunk must be padded up to mask_refmotion.shape[2] frames.
+            if m_chunk.shape[2] < mask_refmotion.shape[2]:
+                need_mask_frames = mask_refmotion.shape[2] - m_chunk.shape[2]
                 m_chunk = torch.cat((m_chunk,) + (m_chunk[:, :, -1:],) * (need_mask_frames), dim=2)
-            m_chunk = comfy.utils.common_upscale(m_chunk[:, :, :mask_refmotion.shape[2] - ref_images_num], latent_width, latent_height, "nearest-exact", "center")
-            mask_refmotion[:, :, ref_images_num:] = m_chunk[:, :, :mask_refmotion.shape[2] - ref_images_num]
+            m_chunk = comfy.utils.common_upscale(m_chunk[:, :, :mask_refmotion.shape[2]], latent_width, latent_height, "nearest-exact", "center")
+            mask_refmotion[:, :, ref_images_num:] = m_chunk[:, :, ref_images_num:mask_refmotion.shape[2]]
         
         full_concat_latent = torch.cat((concat_latent_image, self._vae_encode(vae, image, max_total_pixels)), dim=2)
         mask_refmotion = mask_refmotion.view(1, mask_refmotion.shape[2] // 4, 4, mask_refmotion.shape[3], mask_refmotion.shape[4]).transpose(1, 2)
@@ -148,9 +154,9 @@ class WanAnimateToVideoNative:
         if pose_video is not None:
             pose_chunk = pose_video[video_frame_offset:] if pose_video.shape[0] > video_frame_offset else None
             pose_chunk = pose_chunk[:length]
-            if continue_motion_images is not None:
-                dummy_pose_chunk = torch.ones((continue_motion_max_frames, pose_chunk.shape[1], pose_chunk.shape[2], 3), device=pose_chunk.device, dtype=pose_chunk.dtype)
-                pose_chunk = torch.cat((dummy_pose_chunk, pose_chunk), dim=0)
+            # if continue_motion_images is not None:
+            #     dummy_pose_chunk = torch.ones((continue_motion_max_frames, pose_chunk.shape[1], pose_chunk.shape[2], 3), device=pose_chunk.device, dtype=pose_chunk.dtype)
+            #     pose_chunk = torch.cat((dummy_pose_chunk, pose_chunk), dim=0)
             if pose_chunk is not None and pose_chunk.shape[0] < length:
                 pose_chunk = torch.cat((pose_chunk,) + (pose_chunk[-1:],) * (length - pose_chunk.shape[0]), dim=0)
             if pose_chunk is not None:
@@ -164,9 +170,9 @@ class WanAnimateToVideoNative:
             face_chunk = face_chunk[:length]
             print(f"[WanAnimateToVideoNative] Face chunk shape: {face_chunk.shape}")
             if face_chunk is not None:
-                if continue_motion_images is not None:
-                    face_chunk = torch.cat((continue_motion_images[:continue_motion_max_frames], face_chunk), dim=0)
-                    print(f"[WanAnimateToVideoNative] Face chunk shape after padding with continue motion images: {face_chunk.shape}")
+                # if continue_motion_images is not None:
+                #     face_chunk = torch.cat((continue_motion_images[:continue_motion_max_frames], face_chunk), dim=0)
+                #     print(f"[WanAnimateToVideoNative] Face chunk shape after padding with continue motion images: {face_chunk.shape}")
                 if face_chunk.shape[0] < length:
                     need_frames = length - face_chunk.shape[0]
                     face_chunk = torch.cat((face_chunk,) + (face_chunk[-1:],) * (need_frames), dim=0)
@@ -229,11 +235,11 @@ class WanAnimateToVideoNative:
         out["samples"] = samples
         return out
 
-    def _calculate_chunk_info(self, total_length: int, chunk_length: int, overlap: int, continue_generation_images: Optional[torch.Tensor] = None) -> list:
+    def _calculate_chunk_info(self, total_length: int, chunk_length: int, overlap: int) -> list:
         chunks = []
         cur = 0
         while cur < total_length:
-            is_first = (cur == 0 and continue_generation_images is None)
+            is_first = (cur == 0)
             chunks.append((chunk_length, is_first))
             cur += (chunk_length if is_first else (chunk_length - overlap))
             if cur >= total_length + (overlap if not is_first else 0): break
@@ -245,9 +251,9 @@ class WanAnimateToVideoNative:
         width = samples.shape[4] * 8
         length = samples.shape[2] * 4
         if (height * width) > max_total_pixels:
-            tile_size = height if height < width else width
-            if tile_size > 1072:
-                tile_size = 1072
+            tile_size = height if height > width else width
+            if tile_size > 1024:
+                tile_size = 1024
             print(f"[WanAnimateToVideoNative] Tiled VAE Decoding with tile size: {tile_size}")
             decoded = self._decode_tiled(vae, samples, tile_size=tile_size, temporal_size=length)
         else:
@@ -298,7 +304,7 @@ class WanAnimateToVideoNative:
 
     def execute(self, positive, negative, vae, width, height, total_length, chunk_length, continue_motion_max_frames, 
                 noise, guider, sampler, sigmas, batch_size, clip_vision_output=None, reference_image=None, 
-                face_video=None, pose_video=None, background_video=None, character_mask=None, max_total_pixels=720*1200, continue_generation_images=None):
+                face_video=None, pose_video=None, background_video=None, character_mask=None, max_total_pixels=720*1200):
         
         if clip_vision_output is not None:
             positive = node_helpers.conditioning_set_values(positive, {"clip_vision_output": clip_vision_output})
@@ -306,19 +312,19 @@ class WanAnimateToVideoNative:
         
         reference_image = comfy.utils.common_upscale(reference_image.movedim(-1, 1), width, height, "area", "center").movedim(1, -1)
 
-        reference_image_latent = self._vae_encode(vae, reference_image, max_total_pixels)
+        reference_image_latent = self._vae_encode(vae, reference_image.repeat(4, 1, 1, 1), max_total_pixels)
         
-        chunk_info = self._calculate_chunk_info(total_length, chunk_length, continue_motion_max_frames, continue_generation_images)
+        chunk_info = self._calculate_chunk_info(total_length, chunk_length, continue_motion_max_frames)
         all_output_images, video_frame_offset, prev_cm_images = [], 0, None
 
-        if continue_generation_images is not None:
-            prev_cm_images = continue_generation_images[:continue_motion_max_frames]
+        # if continue_generation_images is not None:
+        #     prev_cm_images = continue_generation_images[:continue_motion_max_frames]
         
         for chunk_idx, (gen_len, is_first) in enumerate(chunk_info):
             print(f"[WanAnimateToVideo] Chunk {chunk_idx+1}/{len(chunk_info)}, Offset: {video_frame_offset}")
             c_pos, c_neg, c_lat, trim_latent = self._prepare_single_chunk(positive, negative, vae, width, height, gen_len, batch_size, 
-                                                          continue_motion_max_frames, video_frame_offset, reference_image_latent, 
-                                                          face_video, pose_video, background_video, character_mask, 
+                                                          continue_motion_max_frames, video_frame_offset, 
+                                                          reference_image_latent, face_video, pose_video, background_video, character_mask, 
                                                           prev_cm_images if not is_first else None, max_total_pixels)
             guider.set_conds(c_pos, c_neg)
             sampled = self._sample_chunk(noise, guider, sampler, sigmas, c_lat)
