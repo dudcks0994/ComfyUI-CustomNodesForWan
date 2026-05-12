@@ -28,7 +28,7 @@ class CustomCLIPTextEncodeNode:
         }
         
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("conditioning", "conditioning")
+    RETURN_NAMES = ("Positive Conditioning", "Negative Conditioning")
     OUTPUT_TOOLTIPS = ("A conditioning containing the embedded text used to guide the diffusion model.", "A conditioning containing the embedded text used to guide the diffusion model.")
     CATEGORY = "Mine"
     FUNCTION = "encode"
