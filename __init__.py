@@ -1,4 +1,4 @@
-from .ImageResizeForWan import ResizeImageForWan
+from .ImageResizeForWan import ResizeImageForWan, WanI2VResizeImage
 from .ShowUtils import ShowInt, ShowFloat, ShowStringText
 from .MathNode import MathNode
 from .maskNode import LoadMaskNode, SaveMaskNode, MaskPaddingNode, MaskResizingNode, MyBlockifyMask, MyGrowMask, MyMaskSubtractNode
@@ -9,8 +9,10 @@ from .WanAnimateNative import WanAnimateToVideoNative
 from aiohttp import web
 from server import PromptServer
 from .ClipEncodeNode import CustomCLIPTextEncodeNode
+from .CustomTextEncodeQwenImageEditNode import CustomTextEncodeQwenImageEditNode, CustomImagesEncodeNode
 
 NODE_CLASS_MAPPINGS = {
+    "WanI2VResizeImage": WanI2VResizeImage,
     "ResizeImageForWan": ResizeImageForWan,
     "ShowInt": ShowInt,
     "ShowFloat": ShowFloat,
@@ -28,11 +30,14 @@ NODE_CLASS_MAPPINGS = {
     "MyGrowMask": MyGrowMask,
     "WanAnimateToVideoNative": WanAnimateToVideoNative,
     "CustomCLIPTextEncodeNode": CustomCLIPTextEncodeNode,
-    "MyMaskSubtractNode": MyMaskSubtractNode
+    "MyMaskSubtractNode": MyMaskSubtractNode,
+    "CustomTextEncodeQwenImageEditNode": CustomTextEncodeQwenImageEditNode,
+    "CustomImagesEncodeNode": CustomImagesEncodeNode
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ResizeImageForWan": "ResizeImageForWan",
+    "WanI2VResizeImage": "Wan I2V Resize Image",
+    "ResizeImageForWan": "Wan I2V Resize Image (legacy)",
     "ShowInt": "ShowInt",
     "ShowFloat": "ShowFloat",
     "ShowStringText": "ShowStringText",
@@ -49,7 +54,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MyGrowMask": "MyGrowMask",
     "WanAnimateToVideoNative": "WanAnimateToVideoNative",
     "CustomCLIPTextEncodeNode": "CustomCLIPTextEncodeNode",
-    "MyMaskSubtractNode": "MyMaskSubtractNode"
+    "MyMaskSubtractNode": "MyMaskSubtractNode",
+    "CustomTextEncodeQwenImageEditNode": "CustomTextEncodeQwenImageEditNode",
+    "CustomImagesEncodeNode": "CustomImagesEncodeNode"
 }
     
 WEB_DIRECTORY = "./web"
@@ -95,17 +102,24 @@ async def select_folder(request):
 import os
 
 def strip_path(path):
-    """경로에서 앞뒤 슬래시를 정리"""
-    # 윈도우 드라이브 레터 처리 (예: C:/)
-    if len(path) >= 2 and path[1] == ':':
-        return path
-    return path.lstrip('/\\')
+    """경로에서 앞뒤 공백과 따옴표만 제거 (슬래시는 유지)"""
+    path = path.strip()
+    if path.startswith('"'):
+        path = path[1:]
+    if path.endswith('"'):
+        path = path[:-1]
+    return path
 
 def is_safe_path(path):
-    """안전한 경로인지 확인 (기본적인 보안 체크)"""
-    # 상대 경로 이동 방지
-    if '..' in path:
-        return False
+    """안전한 경로인지 확인 - 기본적으로 모든 경로 허용"""
+    # 보안이 필요하면 환경변수로 제한 가능
+    # if "MYCUSTOM_STRICT_PATHS" in os.environ:
+    #     basedir = os.path.abspath('.')
+    #     try:
+    #         common_path = os.path.commonpath([basedir, path])
+    #     except:
+    #         return False
+    #     return common_path == basedir
     return True
 
 @PromptServer.instance.routes.get("/mycustom/getpath")
