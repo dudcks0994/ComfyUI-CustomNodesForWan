@@ -37,7 +37,7 @@ class WanAnimateToVideoNative:
                 "pose_video": ("IMAGE", {"default": None}),
                 "background_video": ("IMAGE", {"default": None}),
                 "character_mask": ("MASK", {"default": None}),
-                "max_total_pixels": ("INT", {"default": 720 * 1200 * 81, "min": 1, "max": 99999999, "step": 1, "tooltip": "Maximum total pixels(include frames) for encoding. If the total pixels of the input videos are larger than this value, the encoding will be tiled."}),
+                "max_total_pixels": ("INT", {"default": 720 * 1200, "min": 1, "max": 99999999, "step": 1, "tooltip": "Maximum pixels per frame for VAE encode/decode. If a frame is larger than this value, VAE processing will be tiled."}),
             },
             "optional": {
                 # "continue_generation_images": ("IMAGE", {"default": None}),
@@ -249,13 +249,12 @@ class WanAnimateToVideoNative:
         print(f"[WanAnimateToVideoNative] decoding Samples shape: {samples.shape}")
         height = samples.shape[3] * 8
         width = samples.shape[4] * 8
-        length = samples.shape[2] * 4
         if (height * width) > max_total_pixels:
             tile_size = height if height > width else width
             if tile_size > 1024:
                 tile_size = 1024
             print(f"[WanAnimateToVideoNative] Tiled VAE Decoding with tile size: {tile_size}")
-            decoded = self._decode_tiled(vae, samples, tile_size=tile_size, temporal_size=length)
+            decoded = self._decode_tiled(vae, samples, tile_size=tile_size)
         else:
             print(f"[WanAnimateToVideoNative] Non-tiled VAE Decoding")
             decoded = vae.decode(samples)
@@ -265,7 +264,7 @@ class WanAnimateToVideoNative:
             print(f"[WanAnimateToVideoNative] Reshaped decoded shape: {decoded.shape}")
         return decoded
 
-    def _decode_tiled(self, vae, samples, tile_size, temporal_size, overlap=64, temporal_overlap=8):
+    def _decode_tiled(self, vae, samples, tile_size, temporal_size=64, overlap=256, temporal_overlap=32):
         if tile_size < overlap * 4:
             overlap = tile_size // 4
         if temporal_size < temporal_overlap * 2:
